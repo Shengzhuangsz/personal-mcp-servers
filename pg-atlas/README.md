@@ -19,46 +19,43 @@ Built for the GBIS Data Products workflow but the Lark Doc / Bitable tools are g
 
 ## Install
 
-### 1. Clone
+### Quick install (recommended)
 
 ```bash
 git clone https://github.com/Shengzhuangsz/personal-mcp-servers ~/code/personal-mcp-servers
+cd ~/code/personal-mcp-servers/pg-atlas
+./install.sh
 ```
 
-(Or any path you like; we'll reference it below as `$MCP_DIR`.)
+`install.sh` will:
 
-### 2. Configure credentials
+1. Copy `.env.example` → `.env` (if missing)
+2. Open `.env` in your `$EDITOR` for you to paste credentials
+3. Register the server with Claude Code via `claude mcp add`
+4. Verify the registration
+
+### Manual install (if you'd rather not run the script)
 
 ```bash
+git clone https://github.com/Shengzhuangsz/personal-mcp-servers ~/code/personal-mcp-servers
 cd ~/code/personal-mcp-servers/pg-atlas
-cp .env.example .env
-# edit .env and fill in your Lark App ID / Secret
+cp .env.example .env                 # then edit .env and fill in credentials
+claude mcp add pg-atlas -s user -- python3 $(pwd)/server.py
+claude mcp list                       # should show: pg-atlas ... ✓ Connected
 ```
 
-The server reads credentials in this order: shell env vars → `.env` file → `config.json`. Pick whichever matches your security model.
+### Required Lark scopes
 
-Required Lark scopes on the app:
+The Lark app you point this MCP at needs:
 
-- `im:message:send_as_bot` — send replies (only needed if you use the bot, not strictly the MCP)
 - `contact:user.base:readonly` — `lookup_open_id_by_email`
 - `bitable:app:readonly` — `bitable_query_records`
 - `drive:file` — `lark_doc_upload_image`
 - `docx:document` — all `lark_doc_*` tools
 
-### 3. Register with Claude Code
+The server reads credentials in this order: shell env vars → `.env` file → `config.json`. Pick whichever matches your security model.
 
-```bash
-claude mcp add pg-atlas -s user -- python3 ~/code/personal-mcp-servers/pg-atlas/server.py
-```
-
-Verify:
-
-```bash
-claude mcp list
-# pg-atlas: python3 .../pg-atlas/server.py - ✓ Connected
-```
-
-### 4. Use it
+### Use it
 
 Open a fresh Claude Code session and ask things like:
 
