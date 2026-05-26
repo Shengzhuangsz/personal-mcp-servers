@@ -1,0 +1,18 @@
+# credentials — never commit
+.env
+.env.local
+config.json
+*.secret
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
