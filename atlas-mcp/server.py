@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""pg-atlas MCP server — Lark Doc / Bitable / KB tools for Claude Code.
+"""atlas-mcp server — Lark Doc writing tools for Claude Code.
 
 Stdio MCP server, no external SDK dependency.
 Implements: initialize / tools/list / tools/call (JSON-RPC 2.0).
 
 Tools:
+  - lark_doc_create(title, folder_token)
+  - lark_doc_transfer_ownership(doc_id, email|open_id)
   - lark_doc_list_blocks(doc_id)
   - lark_doc_create_blocks(doc_id, parent_block_id, blocks, index)
   - lark_doc_patch_text(doc_id, block_id, new_text)
   - lark_doc_upload_image(doc_id, block_id, image_path)
   - lark_doc_delete_children(doc_id, parent_block_id, start, end)
-  - bitable_query_records(app_token, table_id, page_size)
-  - kb_search(query, category)
   - lookup_open_id_by_email(email)
 """
 
@@ -81,7 +81,7 @@ def _load_credentials() -> Dict[str, str]:
     }
     if not creds["lark_app_id"] or not creds["lark_app_secret"]:
         sys.stderr.write(
-            "[pg-atlas] FATAL: missing Lark credentials. "
+            "[atlas-mcp] FATAL: missing Lark credentials. "
             "Set PG_LARK_APP_ID / PG_LARK_APP_SECRET via env, "
             f".env file, or config.json in {here}\n"
         )
@@ -101,7 +101,7 @@ SOP_PATH = Path(_creds["sop_path"]) if _creds["sop_path"] else Path()
 # ---------- logging (to stderr; stdout is reserved for protocol) ----------
 
 def log(msg: str) -> None:
-    sys.stderr.write(f"[pg-atlas] {msg}\n")
+    sys.stderr.write(f"[atlas-mcp] {msg}\n")
     sys.stderr.flush()
 
 
@@ -306,55 +306,66 @@ def tool_lark_doc_delete_children(doc_id: str, parent_block_id: str,
     return {"ok": True, "deleted": end - start}
 
 
-def tool_bitable_query_records(app_token: str, table_id: str,
-                                 page_size: int = 100) -> Dict:
-    """查 Bitable 全表记录 (默认前 100 条)"""
-    H = {"Authorization": f"Bearer {lark_token()}"}
-    r = requests.get(
-        f"{LARK_BASE}/bitable/v1/apps/{app_token}/tables/{table_id}/records",
-        headers=H, params={"page_size": page_size}, timeout=30,
+def tool_lark_doc_create(title: str, folder_token: Optional[str] = None) -> Dict:
+    """新建一个空 Lark Doc, 返回 doc_id 和访问 URL.
+
+    创建出的 doc 默认 owner 是 app (机器人), 业务方需调用
+    lark_doc_transfer_ownership 转给真人才能在 Lark UI 里看到/编辑。
+    """
+    body = {"title": title}
+    if folder_token:
+        body["folder_token"] = folder_token
+    r = requests.post(
+        f"{LARK_BASE}/docx/v1/documents",
+        headers=lark_headers(),
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        timeout=15,
     ).json()
     if r.get("code") != 0:
         return {"error": r.get("msg"), "raw": r}
-    items = r.get("data", {}).get("items", [])
-    return {"records": items, "count": len(items)}
+    doc = r.get("data", {}).get("document", {}) or {}
+    doc_id = doc.get("document_id")
+    return {
+        "doc_id": doc_id,
+        "title": doc.get("title"),
+        "url": f"https://open.larksuite.com/docx/{doc_id}" if doc_id else None,
+        "note": "owner 是 app, 真人看不到。若要在 Lark UI 里访问, 调 lark_doc_transfer_ownership 转给真人。",
+    }
 
 
-def tool_kb_search(query: str, category: Optional[str] = None) -> Dict:
-    """在 PG KB 里搜文件 (粗匹配文件名 + 文件内容关键字)"""
-    results = []
-    roots = []
-    if SOP_PATH and SOP_PATH.exists():
-        roots.append(("sop", SOP_PATH.parent, [SOP_PATH]))
-    if KB_ROOT and KB_ROOT.exists():
-        for sub in sorted(KB_ROOT.iterdir()):
-            if not sub.is_dir(): continue
-            if category and sub.name != category: continue
-            roots.append((sub.name, sub, sorted(sub.glob("*.md"))))
-    if not roots:
-        return {"results": [], "total_matched": 0,
-                "note": "no KB root configured. Set PG_KB_ROOT / PG_SOP_PATH."}
+def tool_lark_doc_transfer_ownership(
+    doc_id: str,
+    email: Optional[str] = None,
+    open_id: Optional[str] = None,
+    remove_old_owner: bool = True,
+) -> Dict:
+    """把 Lark Doc 所有权转让给指定真人 (email 或 open_id 二选一).
 
-    q = query.lower()
-    for cat, sub_dir, files in roots:
-        for f in files:
-            try:
-                content = f.read_text()
-            except Exception:
-                continue
-            score = 0
-            if q in f.name.lower(): score += 5
-            score += content.lower().count(q)
-            if score > 0:
-                results.append({
-                    "category": cat,
-                    "file": f.name,
-                    "path": str(f),
-                    "score": score,
-                    "snippet": content[:500],
-                })
-    results.sort(key=lambda x: -x["score"])
-    return {"results": results[:10], "total_matched": len(results)}
+    底层调 drive permission member transfer_owner endpoint.
+    若只给 email, 内部会先反查 open_id.
+    """
+    if not open_id and not email:
+        return {"error": "必须提供 email 或 open_id"}
+    if not open_id:
+        lookup = tool_lookup_open_id_by_email(email)
+        if "error" in lookup:
+            return {"error": f"email 反查失败: {lookup['error']}", "lookup_raw": lookup}
+        open_id = lookup["open_id"]
+
+    url = (f"{LARK_BASE}/drive/v1/permissions/{doc_id}/members/transfer_owner"
+           f"?type=docx&need_notification=true&remove_old_owner="
+           f"{'true' if remove_old_owner else 'false'}")
+    body = {"member_type": "openid", "member_id": open_id}
+    r = requests.post(
+        url, headers=lark_headers(),
+        data=json.dumps(body).encode("utf-8"),
+        timeout=15,
+    ).json()
+    if r.get("code") != 0:
+        return {"error": r.get("msg"), "raw": r,
+                "hint": "若是 1061045 / 没权限, 检查 app 是否有 drive:drive scope"}
+    return {"ok": True, "doc_id": doc_id, "new_owner_open_id": open_id,
+            "url": f"https://open.larksuite.com/docx/{doc_id}"}
 
 
 def tool_lookup_open_id_by_email(email: str) -> Dict:
@@ -453,33 +464,34 @@ TOOLS: List[Dict] = [
         },
     },
     {
-        "name": "bitable_query_records",
-        "description": "Query Lark Bitable records. Returns up to page_size records.",
+        "name": "lark_doc_create",
+        "description": "Create a new empty Lark Doc. Returns doc_id and URL. WARNING: the new doc's owner is the bot/app, so the human user can't see it in Lark UI until you call lark_doc_transfer_ownership. Two workflows: (A) create via this tool then transfer to user; (B) skip this tool, ask user to manually create the doc and paste the URL — then use lark_doc_list_blocks etc on the existing doc_id.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "app_token": {"type": "string"},
-                "table_id": {"type": "string"},
-                "page_size": {"type": "integer", "default": 100},
+                "title": {"type": "string", "description": "Document title"},
+                "folder_token": {"type": "string", "description": "Optional folder token (the doc will be created under this folder). Omit for root."},
             },
-            "required": ["app_token", "table_id"],
+            "required": ["title"],
         },
     },
     {
-        "name": "kb_search",
-        "description": "Search the PG knowledge base (~/Projects/PurposeGate/RAGProject_Production_v1.4.4/KnowledgeBase) by keyword. Returns top 10 matching files with snippets. Use category to limit scope: 'sop', '_shared', 'ib_ownership', 'sales_kpi', 'trading'.",
+        "name": "lark_doc_transfer_ownership",
+        "description": "Transfer ownership of a Lark Doc to a real user (by email or open_id). Required after lark_doc_create so the user can access the doc in Lark UI. Provide either email (will auto-resolve to open_id) or open_id directly.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string"},
-                "category": {"type": "string", "description": "Optional: limit to one category"},
+                "doc_id": {"type": "string"},
+                "email": {"type": "string", "description": "User email — preferred, auto-resolves to open_id"},
+                "open_id": {"type": "string", "description": "Or pass open_id directly if already known"},
+                "remove_old_owner": {"type": "boolean", "description": "Remove the bot from the doc's permission list after transfer (default: true)", "default": True},
             },
-            "required": ["query"],
+            "required": ["doc_id"],
         },
     },
     {
         "name": "lookup_open_id_by_email",
-        "description": "Look up Lark open_id by email. Useful for filtering Bitable records that store users.",
+        "description": "Look up Lark open_id by email. Mostly used internally by lark_doc_transfer_ownership; expose as a standalone tool in case you need to confirm a user exists before transferring.",
         "inputSchema": {
             "type": "object",
             "properties": {"email": {"type": "string"}},
@@ -495,8 +507,8 @@ TOOL_FUNCS = {
     "lark_doc_patch_text": tool_lark_doc_patch_text,
     "lark_doc_upload_image": tool_lark_doc_upload_image,
     "lark_doc_delete_children": tool_lark_doc_delete_children,
-    "bitable_query_records": tool_bitable_query_records,
-    "kb_search": tool_kb_search,
+    "lark_doc_create": tool_lark_doc_create,
+    "lark_doc_transfer_ownership": tool_lark_doc_transfer_ownership,
     "lookup_open_id_by_email": tool_lookup_open_id_by_email,
 }
 
@@ -504,7 +516,7 @@ TOOL_FUNCS = {
 # ---------- JSON-RPC stdio loop ----------
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "pg-atlas", "version": "0.1.0"}
+SERVER_INFO = {"name": "atlas-mcp", "version": "0.1.0"}
 
 
 def send(payload: Dict) -> None:
@@ -570,7 +582,7 @@ def handle_request(req: Dict) -> Optional[Dict]:
 
 
 def main() -> None:
-    log(f"pg-atlas MCP server starting (pid={os.getpid()})")
+    log(f"atlas-mcp server starting (pid={os.getpid()})")
     for line in sys.stdin:
         line = line.strip()
         if not line:

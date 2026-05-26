@@ -11,7 +11,7 @@ Each subdirectory is a standalone server with its own `README.md` and install in
 
 | Folder | Purpose |
 |---|---|
-| [`pg-atlas`](./pg-atlas) | Lark Doc / Bitable / KB tools — for writing and patching Lark documents from Claude Code |
+| [`atlas-mcp`](./atlas-mcp) | Lark Doc writing tools — create, populate, patch, upload images, transfer ownership |
 
 ## Install pattern (any server)
 

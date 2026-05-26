@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# pg-atlas MCP — one-shot installer
+# atlas-mcp MCP — one-shot installer
 #
 # Usage:
-#   cd pg-atlas && ./install.sh
+#   cd atlas-mcp && ./install.sh
 #
 # What it does:
 #   1. Creates .env from .env.example if missing
@@ -15,7 +15,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
-echo "==> pg-atlas installer"
+echo "==> atlas-mcp installer"
 echo "    target: $HERE"
 echo
 
@@ -54,22 +54,22 @@ if ! command -v claude >/dev/null 2>&1; then
     echo
     echo "WARNING: 'claude' CLI not found in PATH."
     echo "  After installing Claude Code, run:"
-    echo "    claude mcp add pg-atlas -s user -- python3 $HERE/server.py"
+    echo "    claude mcp add atlas-mcp -s user -- python3 $HERE/server.py"
     exit 0
 fi
 
 echo
 echo "==> Registering with Claude Code..."
-if claude mcp list 2>/dev/null | grep -q "^pg-atlas:"; then
-    echo "✓ pg-atlas already registered, skipping"
+if claude mcp list 2>/dev/null | grep -q "^atlas-mcp:"; then
+    echo "✓ atlas-mcp already registered, skipping"
 else
-    claude mcp add pg-atlas -s user -- python3 "$HERE/server.py"
+    claude mcp add atlas-mcp -s user -- python3 "$HERE/server.py"
     echo "✓ Registered"
 fi
 
 echo
 echo "==> Verifying..."
-claude mcp list 2>&1 | grep "pg-atlas" || true
+claude mcp list 2>&1 | grep "atlas-mcp" || true
 
 echo
 echo "Done. Restart Claude Code to load the new MCP server."
